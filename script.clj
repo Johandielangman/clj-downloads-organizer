@@ -109,6 +109,17 @@
                         (generate-new-file-name new-file name ext)))
         new-file))))
 
+(defn shell-mv
+  [from to]
+  (try
+    ;; Use the shell to move the file
+    (let [{:keys [exit err]} (shell/sh "mv" from (str to))]
+      (if (zero? exit)
+        (println (format "%s moved successfully" to))
+        (println "Error moving file:" err)))
+    (catch Exception e
+      (println "Error executing move:" (.getMessage e)))))
+
 (defn safe-move
   [input-file-path target-dir]
   (let [input-file-name (.getName (io/file input-file-path))
@@ -116,14 +127,7 @@
                              safe-new-file)]
     (if (.exists output-file-dir)
       (println "File already exists in target directory. Skipping.")
-      (try
-        ;; Use the shell to move the file
-        (let [{:keys [exit err]} (shell/sh "mv" input-file-path (str output-file-dir))]
-          (if (zero? exit)
-            (println (format "%s moved successfully" output-file-dir))
-            (println "Error moving file:" err)))
-        (catch Exception e
-          (println "Error executing move:" (.getMessage e)))))))
+      (shell-mv input-file-path output-file-dir))))
 
 
 (defn list-files
@@ -144,7 +148,7 @@
 
 (defn get-setup
   [setup-dir]
-  (when (not (.exists (io/file setup-dir)))
+  (when-not (.exists (io/file setup-dir))
     (println (format "The setup file '%s' does not exist" setup-dir))
     (System/exit 1))
 
