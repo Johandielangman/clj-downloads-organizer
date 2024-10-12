@@ -1,0 +1,7 @@
+setup:
+    documents:
+      - pdf
+    images:
+      - png
+      - jpg
+      - jpeg
