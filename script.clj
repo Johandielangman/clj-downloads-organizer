@@ -5,6 +5,7 @@
                 [clj-yaml.core :as yaml]
                 [clojure.java.io :as io]
                 [clojure.string :as c-str]
+                [clojure.java.shell :as shell]
                 [clojure.data.json :as json]))
 
 ;; ================================== // Config // ==================================
@@ -12,29 +13,19 @@
 (def cli_version "1.0.0")
 (def file-num-re #"\((\d+)\)")
 
-(def cli-config
-      {:name {
-              :desc "Your name"
-              :require true
-              :alias :n
-              :type :str}
-       :age {
-             :desc "Your age"
-             :require false
-             :alias :a
-             :type :int}
-       :help {
-              :desc "Show help"
-              :require false
-              :alias :h
-              :type :boolean}
-       :version {
-                 :desc "Show version"
-                 :require false
-                 :alias :v
-                 :type :boolean}})
-
-;; ================================== // Utils // ==================================
+(def file-setup
+  {:setup
+   {:images ["png" "jpeg" "jpg" "svg" "webp" "ico" "drawio"]
+    :PowerPoints ["pptx" "ppt"]
+    :Spreadsheets ["xlsx" "xls" "csv"]
+    :Documents ["docx" "doc" "pdf" "txt" "md" "html"]
+    :ArchiveFiles ["zip" "rar" "7z"]
+    :Videos ["mp4" "gif"]
+    :Music ["mp3"]
+    :LaTex ["tex"]
+    :Executable ["exe" "msi"]
+    :Programming ["py" "json" "db" "yml" "yaml"]
+    :Outlook ["msg"]}})
 
 (defn get-root-dir []
   (.getAbsolutePath (io/file ".") ))
@@ -48,6 +39,46 @@
 (defn get-downloads-dir []
   (-> (get-user-home-dir)
       (join-path "Downloads")))
+
+(defn get-setup-dir []
+  (join-path (get-root-dir) "setup.yml"))
+
+(def cli-config
+  {:input-folder {:desc "The input folder directory"
+                  :require false
+                  :alias :i
+                  :default (str (get-downloads-dir))
+                  :type :str}
+   :setup {:desc "The path to the setup yml file"
+           :require false
+           :alias :s
+           :default (str (get-setup-dir))
+           :type :str}
+   :generate-setup {:desc "Generates a default setup.yml file"
+                    :require false
+                    :alias :g
+                    :default false
+                    :type :boolean}
+   :help {:desc "Show help"
+          :require false
+          :alias :h
+          :type :boolean}
+   :version {:desc "Show version"
+             :require false
+             :alias :v
+             :type :boolean}})
+
+;; ================================== // Utils // ==================================
+
+(defn generate-setup-file
+  [output-path]
+  (spit
+    (io/file output-path)
+    (yaml/generate-string
+      file-setup
+      :dumper-options {:indent 4
+                       :indicator-indent 2
+                       :flow-style :block})))
 
 (defn get-name-and-ext [file]
   (let [name (.getName (io/file file))
@@ -80,46 +111,64 @@
 
 (defn safe-move
   [input-file-path target-dir]
-  (let [input-file-name (.getName input-file-path)
+  (let [input-file-name (.getName (io/file input-file-path))
         output-file-dir (->> (join-path target-dir input-file-name)
                              safe-new-file)]
     (if (.exists output-file-dir)
       (println "File already exists in target directory. Skipping.")
       (try
-        (io/copy input-file-path output-file-dir)
-        (io/delete-file input-file-path)
-        (println (format "%s moved successfully" (.getName output-file-dir)))
+        ;; Use the shell to move the file
+        (let [{:keys [exit err]} (shell/sh "mv" input-file-path (str output-file-dir))]
+          (if (zero? exit)
+            (println (format "%s moved successfully" output-file-dir))
+            (println "Error moving file:" err)))
         (catch Exception e
-          (println "Error moving file:" (.getMessage e)))))))
+          (println "Error executing move:" (.getMessage e)))))))
 
 
 (defn list-files
   "Thank you: https://clojuredocs.org/clojure.core/file-seq"
-  [root-dir & file-types]
+  [root-dir file-types]
   (let [grammar-matcher (.getPathMatcher
                           (java.nio.file.FileSystems/getDefault)
                           (format "glob:*.{%s}"
                                   (c-str/join
                                     ","
                                     (map #(c-str/lower-case %) file-types))))]
-    (->> root-dir
-         io/file
-         .listFiles                                         ;; file-seq goes DEEP!
+
+    (->> (io/file root-dir)                        ;; Use io/file to get the root-dir
+         .listFiles                                 ;; file-seq goes DEEP!
          (filter #(.isFile %))
          (filter #(.matches grammar-matcher (.getFileName (.toPath %))))
          (mapv #(.getAbsolutePath %)))))
 
+(defn get-setup
+  [setup-dir]
+  (when (not (.exists (io/file setup-dir)))
+    (println (format "The setup file '%s' does not exist" setup-dir))
+    (System/exit 1))
+
+  (let [yml-setup (yaml/parse-string (slurp (io/file setup-dir)))]
+    (:setup yml-setup)))
+
 ;; ================================== // Main // ==================================
 
 ;; Main function
-(defn main [{:keys [name age verbose]}]
-      (println "Hello from Babashka!")
-      (println "Received name:" name)
-      (when age
-            (println "Received age:" age))
-      (println "JSON example:" (json/write-str {:name name :age age :verbose verbose})))
+(defn main [{:keys [input-folder setup generate-setup]}]
+  (when generate-setup
+    (println "Generating setup.yml")
+    (generate-setup-file setup)
+    (System/exit 0))
 
+  (doseq [[output-folder file-types] (get-setup (get-setup-dir))]
+    (let [input-file-paths (list-files input-folder file-types)]
+      (doseq [input-file-path input-file-paths]
+        (let [output-folder-dir (join-path input-folder (name output-folder))]
+          (when-not (.exists output-folder-dir)
+            (.mkdirs output-folder-dir))
+          (safe-move input-file-path output-folder-dir)))))
 
+)
 
 ;; ====================== // Utils to process args// ======================
 
@@ -138,7 +187,7 @@
     (case cause
       ;; Handle help and version requests without errors
       :require
-      (when (not (or (:help opts) (:version opts)))
+      (when-not (or (:help opts) (:version opts))
         (println
           (format "Missing required argument:\n%s"
                   (cli/format-opts {:spec (select-keys spec [option])})))
@@ -162,83 +211,6 @@
 ;; ================================== // Development // ==================================
 
 (comment
-      (def cli-args (cli/parse-opts
-                      '("-n" "johan")
-                      {:spec cli-config :error-fn cli-err-handler}))
-      cli-args
-
-      (print-help cli-config)
-
-      (main cli-args)
-
-      ;; https://github.com/clj-commons/clj-yaml/blob/master/doc/01-user-guide.adoc
-      (def file-setup {:setup
-                       {:documents ["pdf"]
-                        :images ["png" "jpg" "jpeg"]}})
-      (yaml/generate-string
-        file-setup
-        :dumper-options {:indent 4
-                         :flow-style :block})
-
-      (spit
-        "./setup.yml"
-        (yaml/generate-string
-          file-setup
-          :dumper-options {:indent 4
-                           :indicator-indent 2
-                           :flow-style :block}))
-
-      (def setup
-        (yaml/parse-string (slurp "./setup.yml")))
-      setup
-      (:setup setup)
-
-      (cli/parse-opts '("-n" "johan") {:spec cli-config})
-
-      ;; files and directories ========================================
-      (.exists (io/file "setup.yml"))
-      (.exists (io/file "i-am-not-real.lol"))
-      (.isDirectory (io/file "input"))
-      (.getName (io/file "setup.yml"))
-      (.getParent  (io/file "./input/dog.csv"))
-      (.getPath  (io/file "./input/dog.csv"))
-      (.getAbsolutePath  (io/file "./input/dog.csv"))
-      (.mkdirs (io/file "./a/b"))
-      (file-seq (io/file "./input/"))
-
-      ;; custom
-      (str (join-path (get-root-dir) "foo" "bar"))
-      (str (join-path (user-home) "Downloads"))
-
-      (list-files (io/file "./input/") "TxT" "pdf")
-
-      (list-files (get-downloads-dir) "TxT" "pdf")
-
-
-
-      ;; https://regexr.com/3sqfe
-      (re-find #"(.+?)(?:\.([^.]+))?$" "foo.txt")
-      (re-find #"(.+?)(?:\.([^.]+))?$" "foo.bar.txt")
-      (re-find #"(.+?)(?:\.([^.]+))?$" "foo")
-      (get-name-and-ext "boo.txt")
-
-      (re-pattern "\\s*\\((\\d+)\\)")
-
-      (next-file-num "setup.yml")
-      (next-file-num "setup (2).txt")
-      (next-file-num "file (2).txt")
-
-      (def input-files (list-files (join-path (get-root-dir) "input") "png"))
-
-      (c-str/replace "file (2).txt" file-num-re "(3)")
-
-      (def input-file (io/file (first input-files)))
-      (safe-new-file input-file)
-
-      (c-str/replace "dog" file-num-re (next-file-num input-file))
-
-      (safe-move input-file (get-downloads-dir))
-
 
 
       ())

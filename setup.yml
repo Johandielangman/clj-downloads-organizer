@@ -1,7 +1,45 @@
 setup:
-    documents:
+    Videos:
+      - mp4
+      - gif
+    Documents:
+      - docx
+      - doc
       - pdf
+      - txt
+      - md
+      - html
+    LaTex:
+      - tex
+    PowerPoints:
+      - pptx
+      - ppt
+    Music:
+      - mp3
     images:
       - png
-      - jpg
       - jpeg
+      - jpg
+      - svg
+      - webp
+      - ico
+      - drawio
+    ArchiveFiles:
+      - zip
+      - rar
+      - 7z
+    Programming:
+      - py
+      - json
+      - db
+      - yml
+      - yaml
+    Outlook:
+      - msg
+    Executable:
+      - exe
+      - msi
+    Spreadsheets:
+      - xlsx
+      - xls
+      - csv
